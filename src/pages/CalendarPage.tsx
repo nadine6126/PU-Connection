@@ -30,7 +30,6 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const toLocalIso = (date: string, time: string) => {
-  // returns ISO string "YYYY-MM-DDTHH:MM:00" treated as local
   const t = time || "09:00";
   return new Date(`${date}T${t}:00`).toISOString();
 };
@@ -45,6 +44,13 @@ const CalendarPage = () => {
     title: "", description: "", event_date: format(new Date(), "yyyy-MM-dd"),
     event_time: "09:00", type: "task", reminder_minutes: 60,
   });
+
+  // ✅ FIX: Sync form event_date with selected date whenever dialog opens
+  useEffect(() => {
+    if (open) {
+      setForm(prev => ({ ...prev, event_date: format(selected, "yyyy-MM-dd") }));
+    }
+  }, [open, selected]);
 
   const load = async () => {
     if (!user) return;

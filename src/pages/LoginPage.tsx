@@ -27,14 +27,24 @@ const LoginPage = () => {
 
   useEffect(() => { if (session) navigate("/dashboard", { replace: true }); }, [session, navigate]);
 
-  const expectedDomain = role === "admin" ? ADMIN_DOMAIN : STUDENT_DOMAIN;
+  // On register, role is always student. On login, use selected role.
+  const activeRole: Role = isLogin ? role : "student";
+  const expectedDomain = activeRole === "admin" ? ADMIN_DOMAIN : STUDENT_DOMAIN;
+
+  // Reset role to student when switching to register
+  const handleTabSwitch = (login: boolean) => {
+    setIsLogin(login);
+    if (!login) setRole("student");
+    setEmail("");
+    setPassword("");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const lcEmail = email.toLowerCase().trim();
 
     if (!lcEmail.endsWith(expectedDomain)) {
-      toast.error(`${role === "admin" ? "Admin" : "Student"} email must end with ${expectedDomain}`);
+      toast.error(`${activeRole === "admin" ? "Admin" : "Student"} email must end with ${expectedDomain}`);
       return;
     }
 
@@ -46,11 +56,10 @@ const LoginPage = () => {
         toast.success("Welcome back!");
         navigate("/dashboard");
       } else {
-        if (role === "student") {
-          if (!/^\d{12}$/.test(studentId)) {
-            toast.error("Student ID must be 12 digits");
-            setBusy(false); return;
-          }
+        // Register — student only
+        if (!/^\d{12}$/.test(studentId)) {
+          toast.error("Student ID must be 12 digits");
+          setBusy(false); return;
         }
         if (!name.trim()) { toast.error("Full name is required"); setBusy(false); return; }
 
@@ -61,7 +70,7 @@ const LoginPage = () => {
             emailRedirectTo: `${window.location.origin}/dashboard`,
             data: {
               display_name: name.trim(),
-              student_id: role === "student" ? studentId : null,
+              student_id: studentId,
             },
           },
         });
@@ -91,27 +100,33 @@ const LoginPage = () => {
 
         <Card className="shadow-lg border-border/50">
           <CardHeader className="pb-4 space-y-3">
+            {/* Sign In / Register tab */}
             <div className="flex rounded-lg bg-secondary p-1">
-              <button type="button" onClick={() => setIsLogin(true)}
+              <button type="button" onClick={() => handleTabSwitch(true)}
                 className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${isLogin ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
                 Sign In
               </button>
-              <button type="button" onClick={() => setIsLogin(false)}
+              <button type="button" onClick={() => handleTabSwitch(false)}
                 className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${!isLogin ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
                 Register
               </button>
             </div>
-            <div className="flex rounded-lg border bg-background p-1">
-              <button type="button" onClick={() => setRole("student")}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${role === "student" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-                <User className="w-3 h-3" /> Student
-              </button>
-              <button type="button" onClick={() => setRole("admin")}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${role === "admin" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-                <Shield className="w-3 h-3" /> Admin
-              </button>
-            </div>
+
+            {/* Role toggle — only shown on login */}
+            {isLogin && (
+              <div className="flex rounded-lg border bg-background p-1">
+                <button type="button" onClick={() => setRole("student")}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${role === "student" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
+                  <User className="w-3 h-3" /> Student
+                </button>
+                <button type="button" onClick={() => setRole("admin")}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${role === "admin" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
+                  <Shield className="w-3 h-3" /> Admin
+                </button>
+              </div>
+            )}
           </CardHeader>
+
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               {!isLogin && (
@@ -120,20 +135,21 @@ const LoginPage = () => {
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} className="pl-10" required />
                   </div>
-                  {role === "student" && (
-                    <div className="relative">
-                      <IdCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input placeholder="Student ID (12 digits)" value={studentId}
-                        onChange={(e) => setStudentId(e.target.value.replace(/\D/g, "").slice(0, 12))}
-                        className="pl-10" maxLength={12} required />
-                    </div>
-                  )}
+                  <div className="relative">
+                    <IdCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input placeholder="Student ID (12 digits)" value={studentId}
+                      onChange={(e) => setStudentId(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                      className="pl-10" maxLength={12} required />
+                  </div>
                 </>
               )}
+
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input type="email" placeholder={`name${expectedDomain}`} value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10" required />
+                <Input type="email" placeholder={`name${expectedDomain}`} value={email}
+                  onChange={(e) => setEmail(e.target.value)} className="pl-10" required />
               </div>
+
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input type={showPassword ? "text" : "password"} placeholder="Password (min 6 chars)"
@@ -145,7 +161,7 @@ const LoginPage = () => {
               </div>
 
               <Button type="submit" className="w-full" disabled={busy}>
-                {busy ? "Please wait…" : isLogin ? `Sign In as ${role === "admin" ? "Admin" : "Student"}` : `Register as ${role === "admin" ? "Admin" : "Student"}`}
+                {busy ? "Please wait…" : isLogin ? `Sign In as ${role === "admin" ? "Admin" : "Student"}` : "Register as Student"}
               </Button>
             </form>
           </CardContent>

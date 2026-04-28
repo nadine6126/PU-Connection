@@ -28,12 +28,15 @@ type EventForm = {
   location_or_link: string; event_type: string;
   organizer_name: string; organizer_contact: string;
   payment_status: string;
+  external_register_url: string;
+  cover_image_url: string;
 };
 
 const blankEvent: EventForm = {
   title: "", description: "", event_date: "", event_time: "",
   location_or_link: "", event_type: "webinar",
   organizer_name: "", organizer_contact: "", payment_status: "pending",
+  external_register_url: "", cover_image_url: "",
 };
 
 const AdminDashboard = () => {
@@ -47,6 +50,7 @@ const AdminDashboard = () => {
   const [eventDialog, setEventDialog] = useState(false);
   const [eventForm, setEventForm] = useState<EventForm>(blankEvent);
   const [savingEvent, setSavingEvent] = useState(false);
+  const [reports, setReports] = useState<any[]>([]);
 
   const load = async () => {
     const [{ data: u }, { data: e }, { data: p }, { data: t }, { data: roles }] = await Promise.all([
@@ -56,6 +60,11 @@ const AdminDashboard = () => {
       supabase.from("questions").select("*").order("created_at", { ascending: false }).limit(50),
       supabase.from("user_roles").select("*"),
     ]);
+    const { data: reps } = await supabase
+  .from("reports")
+  .select("*, reporter:profiles!reports_reporter_id_fkey(full_name), reported:profiles!reports_reported_user_id_fkey(full_name, is_banned)")
+  .order("created_at", { ascending: false });
+  setReports((reps ?? []) as any);
     const roleMap: Record<string, string[]> = {};
     ((roles ?? []) as any[]).forEach((r) => { (roleMap[r.user_id] ??= []).push(r.role); });
     setUsers(((u ?? []) as any[]).map((x) => ({ ...x, roles: roleMap[x.user_id] ?? [] })));
@@ -75,6 +84,33 @@ const AdminDashboard = () => {
     await supabase.from("questions").delete().eq("id", id);
     toast.success("Question deleted"); load();
   };
+  const banUser = async (userId: string, userName: string) => {
+  const { error } = await supabase.from("profiles")
+    .update({ is_banned: true }).eq("user_id", userId);
+  if (error) { toast.error(error.message); return; }
+  toast.success(`${userName} has been banned`);
+  load();
+};
+
+const unbanUser = async (userId: string, userName: string) => {
+  const { error } = await supabase.from("profiles")
+    .update({ is_banned: false }).eq("user_id", userId);
+  if (error) { toast.error(error.message); return; }
+  toast.success(`${userName} has been unbanned`);
+  load();
+};
+
+const dismissReport = async (id: string) => {
+  await supabase.from("reports").update({ status: "dismissed" }).eq("id", id);
+  toast.success("Report dismissed");
+  load();
+};
+
+const resolveReport = async (id: string) => {
+  await supabase.from("reports").update({ status: "resolved" }).eq("id", id);
+  toast.success("Report resolved");
+  load();
+};
   const deleteEvent = async (id: string) => {
     await supabase.from("events").delete().eq("id", id);
     toast.success("Event deleted"); load();
@@ -95,6 +131,8 @@ const AdminDashboard = () => {
       organizer_name: ev.organizer_name ?? "",
       organizer_contact: ev.organizer_contact ?? "",
       payment_status: ev.payment_status ?? "pending",
+      external_register_url: ev.external_register_url ?? "",
+      cover_image_url: ev.cover_image_url ?? "",
     });
     setEventDialog(true);
   };
@@ -113,6 +151,8 @@ const AdminDashboard = () => {
       organizer_contact: eventForm.organizer_contact || null,
       payment_status: eventForm.payment_status,
       is_verified: eventForm.payment_status === "paid",
+      external_register_url: eventForm.external_register_url || null,
+      cover_image_url: eventForm.cover_image_url || null,
     };
     let error;
     if (eventForm.id) {
@@ -186,6 +226,7 @@ const AdminDashboard = () => {
           <TabsTrigger value="users">Users & Roles</TabsTrigger>
           <TabsTrigger value="posts">Community</TabsTrigger>
           <TabsTrigger value="qa">Q&A</TabsTrigger>
+          <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
         {/* EVENT MANAGEMENT */}
@@ -345,6 +386,22 @@ const AdminDashboard = () => {
             <div className="grid grid-cols-2 gap-2">
               <div><Label>Organizer Name</Label><Input value={eventForm.organizer_name} onChange={e => setEventForm({ ...eventForm, organizer_name: e.target.value })} /></div>
               <div><Label>Organizer Contact</Label><Input value={eventForm.organizer_contact} onChange={e => setEventForm({ ...eventForm, organizer_contact: e.target.value })} placeholder="Email or phone" /></div>
+            </div>
+            <div>
+              <Label>Registration Link (external)</Label>
+              <Input 
+                value={eventForm.external_register_url} 
+                onChange={e => setEventForm({ ...eventForm, external_register_url: e.target.value })} 
+                placeholder="https://forms.google.com/..." 
+              />
+            </div>
+            <div>
+              <Label>Cover Image URL</Label>
+              <Input 
+                value={eventForm.cover_image_url} 
+                onChange={e => setEventForm({ ...eventForm, cover_image_url: e.target.value })} 
+                placeholder="https://..." 
+              />
             </div>
           </div>
           <DialogFooter>
