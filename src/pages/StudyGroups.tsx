@@ -4,12 +4,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, Users, Plus, MessageCircle, Lock, Globe, Clock } from "lucide-react";
+import { Search, Users, Plus, MessageCircle, Lock, Globe, Clock, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ type Group = {
   id: string; name: string; course_name: string | null; description: string | null;
   tags: string[] | null; max_members: number; creator_id: string; is_private: boolean;
   member_count?: number; is_member?: boolean; request_status?: string | null;
+  my_role?: string | null;
 };
 
 const slugify = (s: string) =>
@@ -31,6 +32,11 @@ const StudyGroups = () => {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", course_name: "", description: "", tags: "", max_members: 20, is_private: false });
   const [creating, setCreating] = useState(false);
+
+  // Delete confirm dialog state
+  const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -38,11 +44,10 @@ const StudyGroups = () => {
     setLoading(true);
     const { data: gs, error } = await supabase
       .from("study_groups")
-      .select("*, study_group_members(user_id)")
+      .select("*, study_group_members(user_id, role)")
       .order("created_at", { ascending: false });
     if (error) { toast.error(error.message); setLoading(false); return; }
 
-    // Cek request status user untuk semua group
     const groupIds = (gs ?? []).map((g: any) => g.id);
     const { data: requests } = user && groupIds.length
       ? await supabase.from("study_group_requests")
@@ -59,6 +64,7 @@ const StudyGroups = () => {
       member_count: g.study_group_members?.length ?? 0,
       is_member: g.study_group_members?.some((m: any) => m.user_id === user?.id) ?? false,
       request_status: requestMap[g.id] ?? null,
+      my_role: g.study_group_members?.find((m: any) => m.user_id === user?.id)?.role ?? null,
     }));
     setGroups(enriched);
     setLoading(false);
@@ -83,52 +89,61 @@ const StudyGroups = () => {
     if (data) navigate(`/dashboard/study-groups/${data.id}`);
   };
 
-const handleJoin = async (g: Group) => {
-  if (g.is_private) {
-    // Cek apakah sudah ada request pending
-    const { data: existing } = await supabase
-      .from("study_group_requests")
-      .select("id")
-      .eq("group_id", g.id)
-      .eq("user_id", user!.id)
-      .maybeSingle();
+  const handleJoin = async (g: Group) => {
+    if (g.is_private) {
+      const { data: existing } = await supabase
+        .from("study_group_requests")
+        .select("id")
+        .eq("group_id", g.id)
+        .eq("user_id", user!.id)
+        .maybeSingle();
 
-    if (existing) { toast.error("You already sent a request!"); return; }
+      if (existing) { toast.error("You already sent a request!"); return; }
 
-    const { error } = await supabase.from("study_group_requests").insert({
-      group_id: g.id, user_id: user!.id, status: "pending",
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Join request sent! Waiting for approval.");
-    load();
-  } else {
-    // Cek apakah sudah member
-    const { data: existing } = await supabase
-      .from("study_group_members")
-      .select("user_id")
-      .eq("group_id", g.id)
-      .eq("user_id", user!.id)
-      .maybeSingle();
+      const { error } = await supabase.from("study_group_requests").insert({
+        group_id: g.id, user_id: user!.id, status: "pending",
+      });
+      if (error) { toast.error(error.message); return; }
+      toast.success("Join request sent! Waiting for approval.");
+      load();
+    } else {
+      const { data: existing } = await supabase
+        .from("study_group_members")
+        .select("user_id")
+        .eq("group_id", g.id)
+        .eq("user_id", user!.id)
+        .maybeSingle();
 
-    if (existing) { 
-      navigate(`/dashboard/study-groups/${g.id}`); 
-      return; 
+      if (existing) {
+        navigate(`/dashboard/study-groups/${g.id}`);
+        return;
+      }
+
+      const { error } = await supabase.from("study_group_members").insert({
+        group_id: g.id, user_id: user!.id, role: "member",
+      });
+      if (error) { toast.error(error.message); return; }
+      toast.success("Joined group!");
+      navigate(`/dashboard/study-groups/${g.id}`);
     }
-
-    const { error } = await supabase.from("study_group_members").insert({
-      group_id: g.id, user_id: user!.id, role: "member",
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Joined group!");
-    navigate(`/dashboard/study-groups/${g.id}`);
-  }
-};
+  };
 
   const handleCancelRequest = async (g: Group) => {
     const { error } = await supabase.from("study_group_requests")
       .delete().eq("group_id", g.id).eq("user_id", user!.id);
     if (error) { toast.error(error.message); return; }
     toast.success("Request cancelled");
+    load();
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    const { error } = await supabase.from("study_groups").delete().eq("id", deleteTarget.id);
+    setDeleting(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Group deleted!");
+    setDeleteTarget(null);
     load();
   };
 
@@ -139,15 +154,35 @@ const handleJoin = async (g: Group) => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+
+      {/* Delete Confirm Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Group</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">"{deleteTarget?.name}"</span>?{" "}
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Study Groups</h1>
           <p className="text-muted-foreground">Find or create study groups for your courses.</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button><Plus className="w-4 h-4 mr-2" />Create Group</Button>
-          </DialogTrigger>
           <DialogContent>
             <DialogHeader><DialogTitle>Create a Study Group</DialogTitle></DialogHeader>
             <div className="space-y-3">
@@ -156,7 +191,6 @@ const handleJoin = async (g: Group) => {
               <div><Label>Description</Label><Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} /></div>
               <div><Label>Tags (comma separated)</Label><Input value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} placeholder="Computer Science, Coding" /></div>
               <div><Label>Max Members</Label><Input type="number" value={form.max_members} onChange={e => setForm({ ...form, max_members: parseInt(e.target.value) || 20 })} min={2} max={100} /></div>
-              {/* Toggle Private/Public */}
               <div className="flex items-center justify-between p-3 rounded-lg border">
                 <div className="flex items-center gap-2">
                   {form.is_private ? <Lock className="w-4 h-4 text-primary" /> : <Globe className="w-4 h-4 text-muted-foreground" />}
@@ -172,6 +206,7 @@ const handleJoin = async (g: Group) => {
               <Button onClick={handleCreate} disabled={creating}>{creating ? "Creating…" : "Create Group"}</Button>
             </DialogFooter>
           </DialogContent>
+          <Button onClick={() => setOpen(true)}><Plus className="w-4 h-4 mr-2" />Create Group</Button>
         </Dialog>
       </div>
 
@@ -211,22 +246,34 @@ const handleJoin = async (g: Group) => {
                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
                     <Users className="w-3 h-3" /> {group.member_count}/{group.max_members}
                   </div>
-                  {group.is_member ? (
-                    <Button size="sm" onClick={() => navigate(`/dashboard/study-groups/${group.id}`)}>
-                      <MessageCircle className="w-3 h-3 mr-1" />Open Chat
-                    </Button>
-                  ) : group.request_status === "pending" ? (
-                    <Button size="sm" variant="outline" onClick={() => handleCancelRequest(group)}>
-                      <Clock className="w-3 h-3 mr-1" />Pending · Cancel
-                    </Button>
-                  ) : group.request_status === "rejected" ? (
-                    <Badge variant="destructive" className="text-[10px]">Request Rejected</Badge>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={() => handleJoin(group)}
-                      disabled={(group.member_count ?? 0) >= group.max_members}>
-                      {group.is_private ? <><Lock className="w-3 h-3 mr-1" />Request Join</> : "Join"}
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {(group.creator_id === user?.id || group.my_role === "admin") && (
+                      <Button
+                        size="sm" variant="ghost"
+                        onClick={() => setDeleteTarget(group)}
+                        title="Delete group"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    )}
+                    {group.is_member ? (
+                      <Button size="sm" onClick={() => navigate(`/dashboard/study-groups/${group.id}`)}>
+                        <MessageCircle className="w-3 h-3 mr-1" />Open Chat
+                      </Button>
+                    ) : group.request_status === "pending" ? (
+                      <Button size="sm" variant="outline" onClick={() => handleCancelRequest(group)}>
+                        <Clock className="w-3 h-3 mr-1" />Pending · Cancel
+                      </Button>
+                    ) : group.request_status === "rejected" ? (
+                      <Badge variant="destructive" className="text-[10px]">Request Rejected</Badge>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => handleJoin(group)}
+                        disabled={(group.member_count ?? 0) >= group.max_members}>
+                        {group.is_private ? <><Lock className="w-3 h-3 mr-1" />Request Join</> : "Join"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

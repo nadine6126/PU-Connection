@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -32,11 +32,22 @@ type EventForm = {
   cover_image_url: string;
 };
 
+type ConfirmDialog = {
+  open: boolean;
+  title: string;
+  description: string;
+  onConfirm: () => Promise<void>;
+};
+
 const blankEvent: EventForm = {
   title: "", description: "", event_date: "", event_time: "",
   location_or_link: "", event_type: "webinar",
   organizer_name: "", organizer_contact: "", payment_status: "pending",
   external_register_url: "", cover_image_url: "",
+};
+
+const blankConfirm: ConfirmDialog = {
+  open: false, title: "", description: "", onConfirm: async () => {},
 };
 
 const AdminDashboard = () => {
@@ -46,29 +57,49 @@ const AdminDashboard = () => {
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [allGroups, setAllGroups] = useState<any[]>([]);
 
   const [eventDialog, setEventDialog] = useState(false);
   const [eventForm, setEventForm] = useState<EventForm>(blankEvent);
   const [savingEvent, setSavingEvent] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
 
+  // Generic confirm dialog
+  const [confirm, setConfirm] = useState<ConfirmDialog>(blankConfirm);
+  const [confirming, setConfirming] = useState(false);
+
+  const closeConfirm = () => setConfirm(blankConfirm);
+  const askConfirm = (title: string, description: string, onConfirm: () => Promise<void>) => {
+    setConfirm({ open: true, title, description, onConfirm });
+  };
+  const runConfirm = async () => {
+    setConfirming(true);
+    await confirm.onConfirm();
+    setConfirming(false);
+    closeConfirm();
+  };
+
   const load = async () => {
-    const [{ data: u }, { data: e }, { data: p }, { data: t }, { data: roles }] = await Promise.all([
+    const [{ data: u }, { data: e }, { data: p }, { data: t }, { data: roles }, { data: grps }] = await Promise.all([
       supabase.from("profiles").select("*").order("created_at", { ascending: false }),
       supabase.from("events").select("*").order("start_at", { ascending: false }),
       supabase.from("community_posts").select("*").order("created_at", { ascending: false }).limit(50),
       supabase.from("questions").select("*").order("created_at", { ascending: false }).limit(50),
       supabase.from("user_roles").select("*"),
+      supabase.from("study_groups").select("*, study_group_members(user_id)").order("created_at", { ascending: false }),
     ]);
     const { data: reps } = await supabase
-  .from("reports")
-  .select("*, reporter:profiles!reports_reporter_id_fkey(full_name), reported:profiles!reports_reported_user_id_fkey(full_name, is_banned)")
-  .order("created_at", { ascending: false });
-  setReports((reps ?? []) as any);
+      .from("reports")
+      .select("*, reporter:profiles!reports_reporter_id_fkey(full_name), reported:profiles!reports_reported_user_id_fkey(full_name, is_banned)")
+      .order("created_at", { ascending: false });
+    setReports((reps ?? []) as any);
     const roleMap: Record<string, string[]> = {};
     ((roles ?? []) as any[]).forEach((r) => { (roleMap[r.user_id] ??= []).push(r.role); });
     setUsers(((u ?? []) as any[]).map((x) => ({ ...x, roles: roleMap[x.user_id] ?? [] })));
-    setAllEvents((e ?? []) as any); setPosts((p ?? []) as any); setQuestions((t ?? []) as any);
+    setAllEvents((e ?? []) as any);
+    setPosts((p ?? []) as any);
+    setQuestions((t ?? []) as any);
+    setAllGroups((grps ?? []).map((g: any) => ({ ...g, member_count: g.study_group_members?.length ?? 0 })));
   };
 
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
@@ -76,44 +107,58 @@ const AdminDashboard = () => {
   if (loading) return <div className="text-muted-foreground">Loading…</div>;
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
-  const deletePost = async (id: string) => {
-    await supabase.from("community_posts").delete().eq("id", id);
-    toast.success("Post deleted"); load();
+  const deletePost = (id: string, title?: string) => askConfirm(
+    "Delete Post",
+    `Are you sure you want to delete this post${title ? ` "${title}"` : ""}? This cannot be undone.`,
+    async () => { await supabase.from("community_posts").delete().eq("id", id); toast.success("Post deleted"); load(); }
+  );
+
+  const deleteQuestion = (id: string, title?: string) => askConfirm(
+    "Delete Question",
+    `Are you sure you want to delete${title ? ` "${title}"` : " this question"}? This cannot be undone.`,
+    async () => { await supabase.from("questions").delete().eq("id", id); toast.success("Question deleted"); load(); }
+  );
+
+  const deleteEvent = (id: string, title?: string) => askConfirm(
+    "Delete Event",
+    `Are you sure you want to delete${title ? ` "${title}"` : " this event"}? This cannot be undone.`,
+    async () => { await supabase.from("events").delete().eq("id", id); toast.success("Event deleted"); load(); }
+  );
+
+  const deleteGroup = (id: string, name?: string) => askConfirm(
+    "Delete Study Group",
+    `Are you sure you want to delete${name ? ` "${name}"` : " this group"}? All members and messages will be lost.`,
+    async () => { await supabase.from("study_groups").delete().eq("id", id); toast.success("Group deleted"); load(); }
+  );
+
+  const banUser = (userId: string, userName: string) => askConfirm(
+    "Ban User",
+    `Are you sure you want to ban "${userName}"? They will no longer be able to access the platform.`,
+    async () => {
+      const { error } = await supabase.from("profiles").update({ is_banned: true }).eq("user_id", userId);
+      if (error) { toast.error(error.message); return; }
+      toast.success(`${userName} has been banned`);
+      load();
+    }
+  );
+
+  const unbanUser = async (userId: string, userName: string) => {
+    const { error } = await supabase.from("profiles").update({ is_banned: false }).eq("user_id", userId);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${userName} has been unbanned`);
+    load();
   };
-  const deleteQuestion = async (id: string) => {
-    await supabase.from("questions").delete().eq("id", id);
-    toast.success("Question deleted"); load();
+
+  const dismissReport = async (id: string) => {
+    await supabase.from("reports").update({ status: "dismissed" }).eq("id", id);
+    toast.success("Report dismissed");
+    load();
   };
-  const banUser = async (userId: string, userName: string) => {
-  const { error } = await supabase.from("profiles")
-    .update({ is_banned: true }).eq("user_id", userId);
-  if (error) { toast.error(error.message); return; }
-  toast.success(`${userName} has been banned`);
-  load();
-};
 
-const unbanUser = async (userId: string, userName: string) => {
-  const { error } = await supabase.from("profiles")
-    .update({ is_banned: false }).eq("user_id", userId);
-  if (error) { toast.error(error.message); return; }
-  toast.success(`${userName} has been unbanned`);
-  load();
-};
-
-const dismissReport = async (id: string) => {
-  await supabase.from("reports").update({ status: "dismissed" }).eq("id", id);
-  toast.success("Report dismissed");
-  load();
-};
-
-const resolveReport = async (id: string) => {
-  await supabase.from("reports").update({ status: "resolved" }).eq("id", id);
-  toast.success("Report resolved");
-  load();
-};
-  const deleteEvent = async (id: string) => {
-    await supabase.from("events").delete().eq("id", id);
-    toast.success("Event deleted"); load();
+  const resolveReport = async (id: string) => {
+    await supabase.from("reports").update({ status: "resolved" }).eq("id", id);
+    toast.success("Report resolved");
+    load();
   };
 
   const openNewEvent = () => { setEventForm(blankEvent); setEventDialog(true); };
@@ -198,6 +243,25 @@ const resolveReport = async (id: string) => {
 
   return (
     <div className="space-y-6 animate-fade-in">
+
+      {/* Generic Confirm Dialog */}
+      <Dialog open={confirm.open} onOpenChange={(v) => { if (!v) closeConfirm(); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{confirm.title}</DialogTitle>
+            <DialogDescription>{confirm.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={closeConfirm} disabled={confirming}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={runConfirm} disabled={confirming}>
+              {confirming ? "Processing…" : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Shield className="w-6 h-6 text-primary" />
@@ -226,6 +290,7 @@ const resolveReport = async (id: string) => {
           <TabsTrigger value="users">Users & Roles</TabsTrigger>
           <TabsTrigger value="posts">Community</TabsTrigger>
           <TabsTrigger value="qa">Q&A</TabsTrigger>
+          <TabsTrigger value="groups">Study Groups</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
@@ -273,7 +338,9 @@ const resolveReport = async (id: string) => {
                       </Button>
                     )}
                     <Button size="icon" variant="ghost" onClick={() => openEditEvent(ev)}><Pencil className="w-3 h-3" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => deleteEvent(ev.id)}><Trash2 className="w-3 h-3" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => deleteEvent(ev.id, ev.title)}>
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -301,12 +368,25 @@ const resolveReport = async (id: string) => {
                     {u.roles.map((r: string) => (
                       <Badge key={r} variant={r === "admin" ? "default" : "secondary"} className="text-[10px]">{r}</Badge>
                     ))}
+                    {u.is_banned && <Badge variant="destructive" className="text-[10px]">Banned</Badge>}
                     {u.user_id !== user?.id && (
-                      <Button size="sm" variant="ghost" onClick={() => toggleAdmin(u)}>
-                        {u.roles.includes("admin")
-                          ? <><ShieldOff className="w-3 h-3 mr-1" />Revoke</>
-                          : <><ShieldCheck className="w-3 h-3 mr-1" />Make Admin</>}
-                      </Button>
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => toggleAdmin(u)}>
+                          {u.roles.includes("admin")
+                            ? <><ShieldOff className="w-3 h-3 mr-1" />Revoke</>
+                            : <><ShieldCheck className="w-3 h-3 mr-1" />Make Admin</>}
+                        </Button>
+                        {u.is_banned ? (
+                          <Button size="sm" variant="ghost" onClick={() => unbanUser(u.user_id, u.full_name)}>
+                            Unban
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => banUser(u.user_id, u.full_name)}>
+                            Ban
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -324,7 +404,9 @@ const resolveReport = async (id: string) => {
                   {p.title && <p className="text-sm font-medium">{p.title}</p>}
                   <p className="text-sm text-muted-foreground line-clamp-2">{p.body}</p>
                 </div>
-                <Button size="icon" variant="ghost" onClick={() => deletePost(p.id)}><Trash2 className="w-3 h-3" /></Button>
+                <Button size="icon" variant="ghost" onClick={() => deletePost(p.id, p.title)}>
+                  <Trash2 className="w-3 h-3" />
+                </Button>
               </CardContent></Card>
             ))}
         </TabsContent>
@@ -338,7 +420,65 @@ const resolveReport = async (id: string) => {
                   <p className="text-sm font-medium flex items-center gap-1"><HelpCircle className="w-3 h-3" />{t.title}</p>
                   <p className="text-sm text-muted-foreground line-clamp-2">{t.body}</p>
                 </div>
-                <Button size="icon" variant="ghost" onClick={() => deleteQuestion(t.id)}><Trash2 className="w-3 h-3" /></Button>
+                <Button size="icon" variant="ghost" onClick={() => deleteQuestion(t.id, t.title)}>
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              </CardContent></Card>
+            ))}
+        </TabsContent>
+
+        {/* STUDY GROUPS */}
+        <TabsContent value="groups" className="space-y-2">
+          {allGroups.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No groups yet.</p>
+          ) : allGroups.map(g => (
+            <Card key={g.id}>
+              <CardContent className="pt-4 flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">{g.name}</p>
+                  <p className="text-xs text-muted-foreground">{g.course_name ?? "—"} · {g.member_count} members</p>
+                  {g.description && <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{g.description}</p>}
+                </div>
+                <Button size="icon" variant="ghost" onClick={() => deleteGroup(g.id, g.name)}>
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
+        {/* REPORTS */}
+        <TabsContent value="reports" className="space-y-2">
+          {reports.length === 0 ? <p className="text-sm text-muted-foreground py-8 text-center">No reports.</p> :
+            (reports as any[]).map((r: any) => (
+              <Card key={r.id}><CardContent className="pt-4 flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">{r.content_type} reported</p>
+                  <p className="text-xs text-muted-foreground">
+                    By: {r.reporter?.full_name ?? "Unknown"} · Against: {r.reported?.full_name ?? "Unknown"}
+                  </p>
+                  {r.reason && <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{r.reason}</p>}
+                  <Badge variant="outline" className="text-[10px] mt-1 capitalize">{r.status}</Badge>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  {r.reported && !r.reported.is_banned && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => banUser(r.reported_user_id, r.reported?.full_name)}>
+                      Ban
+                    </Button>
+                  )}
+                  {r.reported?.is_banned && (
+                    <Button size="sm" variant="ghost" onClick={() => unbanUser(r.reported_user_id, r.reported?.full_name)}>
+                      Unban
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => resolveReport(r.id)} disabled={r.status === "resolved"}>
+                    Resolve
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => dismissReport(r.id)} disabled={r.status === "dismissed"}>
+                    Dismiss
+                  </Button>
+                </div>
               </CardContent></Card>
             ))}
         </TabsContent>
@@ -389,18 +529,18 @@ const resolveReport = async (id: string) => {
             </div>
             <div>
               <Label>Registration Link (external)</Label>
-              <Input 
-                value={eventForm.external_register_url} 
-                onChange={e => setEventForm({ ...eventForm, external_register_url: e.target.value })} 
-                placeholder="https://forms.google.com/..." 
+              <Input
+                value={eventForm.external_register_url}
+                onChange={e => setEventForm({ ...eventForm, external_register_url: e.target.value })}
+                placeholder="https://forms.google.com/..."
               />
             </div>
             <div>
               <Label>Cover Image URL</Label>
-              <Input 
-                value={eventForm.cover_image_url} 
-                onChange={e => setEventForm({ ...eventForm, cover_image_url: e.target.value })} 
-                placeholder="https://..." 
+              <Input
+                value={eventForm.cover_image_url}
+                onChange={e => setEventForm({ ...eventForm, cover_image_url: e.target.value })}
+                placeholder="https://..."
               />
             </div>
           </div>

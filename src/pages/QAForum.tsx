@@ -15,16 +15,27 @@ import { ReportButton } from "@/components/ReportButton";
 
 type Question = {
   id: string; user_id: string | null; title: string; body: string;
-  is_anonymous: boolean; created_at: string; image_url?: string | null;
+  is_anonymous: boolean; created_at: string;
+  image_url?: string | null;        // legacy single
+  image_urls?: string[] | null;     // new multi
   reply_count?: number; author_name?: string; author_avatar?: string | null;
 };
 
 type Answer = {
   id: string; question_id: string; user_id: string; body: string;
-  is_anonymous: boolean; created_at: string; image_url?: string | null;
+  is_anonymous: boolean; created_at: string;
+  image_url?: string | null;        // legacy single
+  image_urls?: string[] | null;     // new multi
   parent_answer_id?: string | null;
   author_name?: string; author_avatar?: string | null;
   replies?: Answer[];
+};
+
+// Helper: normalise both old image_url and new image_urls into one array
+const getImages = (item: { image_url?: string | null; image_urls?: string[] | null }): string[] => {
+  if (item.image_urls && item.image_urls.length > 0) return item.image_urls;
+  if (item.image_url) return [item.image_url];
+  return [];
 };
 
 const initials = (n: string) => n.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase();
@@ -68,6 +79,26 @@ const ImageModal = ({ src, onClose }: { src: string; onClose: () => void }) => {
 };
 // ────────────────────────────────────────────────────────────────────────────
 
+// ── IMAGE GRID ───────────────────────────────────────────────────────────────
+const ImageGrid = ({ urls, onOpen }: { urls: string[]; onOpen: (src: string) => void }) => {
+  if (urls.length === 0) return null;
+  return (
+    <div className={`grid gap-1.5 mt-1 ${urls.length === 1 ? "grid-cols-1" : urls.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+      {urls.map((url, i) => (
+        <img
+          key={i}
+          src={url}
+          alt={`image ${i + 1}`}
+          className="rounded-lg object-cover cursor-pointer hover:opacity-90 transition-opacity w-full"
+          style={{ maxHeight: urls.length === 1 ? "240px" : "140px" }}
+          onClick={e => { e.stopPropagation(); onOpen(url); }}
+        />
+      ))}
+    </div>
+  );
+};
+// ────────────────────────────────────────────────────────────────────────────
+
 const TranslateButton = ({ text }: { text: string }) => {
   const [translated, setTranslated] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -103,41 +134,49 @@ const TranslateButton = ({ text }: { text: string }) => {
   );
 };
 
+// ── REPLY COMPOSER (multi-image) ─────────────────────────────────────────────
+const MAX_IMAGES = 4;
+
 const ReplyComposer = ({
   onSubmit, onCancel, placeholder = "Write a reply…"
 }: {
-  onSubmit: (body: string, anon: boolean, imageFile: File | null) => Promise<void>;
+  onSubmit: (body: string, anon: boolean, imageFiles: File[]) => Promise<void>;
   onCancel?: () => void;
   placeholder?: string;
 }) => {
   const [text, setText] = useState("");
   const [anon, setAnon] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error("Image too large (max 5MB)"); return; }
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-  };
-
-  const clearImage = () => {
-    setImageFile(null);
-    setImagePreview(null);
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    const remaining = MAX_IMAGES - imageFiles.length;
+    if (remaining <= 0) { toast.error(`Max ${MAX_IMAGES} images`); return; }
+    const selected = files.slice(0, remaining);
+    const oversized = selected.filter(f => f.size > 5 * 1024 * 1024);
+    if (oversized.length) { toast.error("Each image must be under 5MB"); return; }
+    setImageFiles(prev => [...prev, ...selected]);
+    setImagePreviews(prev => [...prev, ...selected.map(f => URL.createObjectURL(f))]);
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  const removeImage = (i: number) => {
+    setImageFiles(prev => prev.filter((_, idx) => idx !== i));
+    setImagePreviews(prev => prev.filter((_, idx) => idx !== i));
+  };
+
   const handleSubmit = async () => {
-    if (!text.trim() && !imageFile) return;
+    if (!text.trim() && imageFiles.length === 0) return;
     setPosting(true);
-    await onSubmit(text.trim(), anon, imageFile);
+    await onSubmit(text.trim(), anon, imageFiles);
     setText("");
     setAnon(false);
-    clearImage();
+    setImageFiles([]);
+    setImagePreviews([]);
     setPosting(false);
   };
 
@@ -146,20 +185,37 @@ const ReplyComposer = ({
       <Textarea value={text} onChange={e => setText(e.target.value)}
         placeholder={placeholder} rows={2} maxLength={500}
         className="resize-none text-sm" />
-      {imagePreview && (
-        <div className="relative inline-block">
-          <img src={imagePreview} alt="preview" className="h-24 w-24 object-cover rounded-lg border" />
-          <button onClick={clearImage} className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center">
-            <X className="w-3 h-3" />
-          </button>
+
+      {imagePreviews.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {imagePreviews.map((src, i) => (
+            <div key={i} className="relative inline-block">
+              <img src={src} alt="preview" className="h-20 w-20 object-cover rounded-lg border" />
+              <button
+                onClick={() => removeImage(i)}
+                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
+
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-3">
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => fileRef.current?.click()} title="Add photo">
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageSelect} />
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7"
+            onClick={() => fileRef.current?.click()}
+            title={`Add photos (max ${MAX_IMAGES})`}
+            disabled={imageFiles.length >= MAX_IMAGES}
+          >
             <ImagePlus className="w-3.5 h-3.5 text-muted-foreground" />
           </Button>
+          {imageFiles.length > 0 && (
+            <span className="text-xs text-muted-foreground">{imageFiles.length}/{MAX_IMAGES}</span>
+          )}
           <div className="flex items-center gap-1.5">
             <Switch checked={anon} onCheckedChange={setAnon} id={`anon-reply-${Math.random()}`} />
             <Label className="text-xs text-muted-foreground cursor-pointer">Anonymous</Label>
@@ -167,13 +223,27 @@ const ReplyComposer = ({
         </div>
         <div className="flex gap-2">
           {onCancel && <Button size="sm" variant="ghost" onClick={onCancel} className="h-7 text-xs">Cancel</Button>}
-          <Button size="sm" onClick={handleSubmit} disabled={posting || (!text.trim() && !imageFile)} className="h-7 text-xs">
+          <Button size="sm" onClick={handleSubmit} disabled={posting || (!text.trim() && imageFiles.length === 0)} className="h-7 text-xs">
             <Send className="w-3 h-3 mr-1" />{posting ? "Posting…" : "Reply"}
           </Button>
         </div>
       </div>
     </div>
   );
+};
+// ────────────────────────────────────────────────────────────────────────────
+
+const uploadImages = async (files: File[], userId: string): Promise<string[]> => {
+  const urls: string[] = [];
+  for (const file of files) {
+    const ext = file.name.split(".").pop();
+    const path = `qa/${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage.from("community-images").upload(path, file);
+    if (error) { toast.error("Failed to upload an image"); continue; }
+    const { data } = supabase.storage.from("community-images").getPublicUrl(path);
+    urls.push(data.publicUrl);
+  }
+  return urls;
 };
 
 const AnswerItem = ({
@@ -184,25 +254,17 @@ const AnswerItem = ({
 }) => {
   const [showReply, setShowReply] = useState(false);
   const [showReplies, setShowReplies] = useState(true);
-  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
+  const [modalSrc, setModalSrc] = useState<string | null>(null);
   const author = answer.is_anonymous ? "Anonymous" : answer.author_name ?? "Student";
+  const images = getImages(answer);
 
-  const uploadImage = async (file: File, userId: string): Promise<string | null> => {
-    const ext = file.name.split(".").pop();
-    const path = `qa/${userId}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("community-images").upload(path, file);
-    if (error) { toast.error("Failed to upload image"); return null; }
-    const { data } = supabase.storage.from("community-images").getPublicUrl(path);
-    return data.publicUrl;
-  };
-
-  const handleReply = async (body: string, anon: boolean, imageFile: File | null) => {
+  const handleReply = async (body: string, anon: boolean, imageFiles: File[]) => {
     if (!currentUserId) return;
-    let image_url: string | null = null;
-    if (imageFile) image_url = await uploadImage(imageFile, currentUserId);
+    const image_urls = imageFiles.length ? await uploadImages(imageFiles, currentUserId) : [];
     const { error } = await supabase.from("answers").insert({
       question_id: questionId, user_id: currentUserId,
-      body: body || "", is_anonymous: anon, image_url,
+      body: body || "", is_anonymous: anon,
+      image_urls: image_urls.length ? image_urls : null,
       parent_answer_id: answer.id,
     });
     if (error) { toast.error(error.message); return; }
@@ -213,7 +275,6 @@ const AnswerItem = ({
 
   return (
     <div className={`${depth > 0 ? "ml-8 border-l-2 border-border pl-3" : ""}`}>
-      {/* IMAGE MODAL */}
       {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
 
       <div className="flex gap-2 py-2">
@@ -228,11 +289,7 @@ const AnswerItem = ({
             <span className="text-muted-foreground">· {formatDistanceToNow(new Date(answer.created_at), { addSuffix: true })}</span>
           </div>
           {answer.body && <p className="text-sm text-foreground whitespace-pre-wrap break-words">{answer.body}</p>}
-          {answer.image_url && (
-            <img src={answer.image_url} alt="reply image"
-              className="rounded-lg max-w-xs max-h-48 object-cover cursor-pointer hover:opacity-90 mt-1"
-              onClick={() => setModalSrc(answer.image_url!)} /> // ← CHANGED
-          )}
+          <ImageGrid urls={images} onOpen={setModalSrc} />
           <div className="flex items-center gap-3 pt-0.5 flex-wrap">
             <button onClick={() => setShowReply(!showReply)}
               className="text-xs text-muted-foreground hover:text-primary transition-colors">
@@ -273,7 +330,8 @@ const QuestionThread = ({
 }) => {
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
+  const [modalSrc, setModalSrc] = useState<string | null>(null);
+  const images = getImages(question);
 
   const loadAnswers = async () => {
     setLoading(true);
@@ -305,23 +363,14 @@ const QuestionThread = ({
 
   useEffect(() => { loadAnswers(); }, [question.id]);
 
-  const uploadImage = async (file: File): Promise<string | null> => {
-    if (!currentUserId) return null;
-    const ext = file.name.split(".").pop();
-    const path = `qa/${currentUserId}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("community-images").upload(path, file);
-    if (error) { toast.error("Failed to upload image"); return null; }
-    const { data } = supabase.storage.from("community-images").getPublicUrl(path);
-    return data.publicUrl;
-  };
-
-  const handleTopReply = async (body: string, anon: boolean, imageFile: File | null) => {
+  const handleTopReply = async (body: string, anon: boolean, imageFiles: File[]) => {
     if (!currentUserId) return;
-    let image_url: string | null = null;
-    if (imageFile) image_url = await uploadImage(imageFile);
+    const image_urls = imageFiles.length ? await uploadImages(imageFiles, currentUserId) : [];
     const { error } = await supabase.from("answers").insert({
       question_id: question.id, user_id: currentUserId,
-      body: body || "", is_anonymous: anon, image_url, parent_answer_id: null,
+      body: body || "", is_anonymous: anon,
+      image_urls: image_urls.length ? image_urls : null,
+      parent_answer_id: null,
     });
     if (error) { toast.error(error.message); return; }
     toast.success("Reply posted!");
@@ -333,7 +382,6 @@ const QuestionThread = ({
 
   return (
     <div className="space-y-4">
-      {/* IMAGE MODAL */}
       {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
 
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -354,11 +402,7 @@ const QuestionThread = ({
                 <span className="text-muted-foreground text-xs">· {formatDistanceToNow(new Date(question.created_at), { addSuffix: true })}</span>
               </div>
               <p className="text-foreground whitespace-pre-wrap break-words">{question.body}</p>
-              {question.image_url && (
-                <img src={question.image_url} alt="question image"
-                  className="rounded-xl max-w-sm max-h-60 object-cover cursor-pointer hover:opacity-90 mt-1"
-                  onClick={() => setModalSrc(question.image_url!)} /> // ← CHANGED
-              )}
+              <ImageGrid urls={images} onOpen={setModalSrc} />
               <div className="flex items-center gap-3 flex-wrap">
                 {question.body && <TranslateButton text={question.body} />}
                 <ReportButton contentType="question" contentId={question.id} reportedUserId={question.user_id ?? ""} />
@@ -400,9 +444,9 @@ const QAForum = () => {
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
   const [selected, setSelected] = useState<Question | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [modalSrc, setModalSrc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
 
@@ -429,33 +473,30 @@ const QAForum = () => {
 
   useEffect(() => { if (user) load(); }, [user]);
 
+  const removeImage = (i: number) => {
+    setImageFiles(prev => prev.filter((_, idx) => idx !== i));
+    setImagePreviews(prev => prev.filter((_, idx) => idx !== i));
+  };
+
   const handlePost = async () => {
     const { data: profile } = await supabase.from("profiles")
       .select("is_banned").eq("user_id", user!.id).maybeSingle();
     if (profile?.is_banned) { toast.error("Your account has been banned."); return; }
 
     const content = text.trim();
-    if (!content && !imageFile) return;
+    if (!content && imageFiles.length === 0) return;
     if (content.length > 500) { toast.error("Maximum 500 characters"); return; }
     setPosting(true);
 
-    let image_url: string | null = null;
-    if (imageFile) {
-      const ext = imageFile.name.split(".").pop();
-      const path = `qa/${user!.id}/${Date.now()}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from("community-images").upload(path, imageFile);
-      if (!uploadError) {
-        const { data } = supabase.storage.from("community-images").getPublicUrl(path);
-        image_url = data.publicUrl;
-      }
-      setImageFile(null);
-      setImagePreview(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    const image_urls = imageFiles.length ? await uploadImages(imageFiles, user!.id) : [];
+    setImageFiles([]);
+    setImagePreviews([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
 
     const title = (content || "📷 Photo").slice(0, 80);
     const { error } = await supabase.from("questions").insert({
-      user_id: user!.id, title, body: content, tags: [], is_anonymous: anonymous, image_url,
+      user_id: user!.id, title, body: content, tags: [], is_anonymous: anonymous,
+      image_urls: image_urls.length ? image_urls : null,
     });
     setPosting(false);
     if (error) { toast.error(error.message); return; }
@@ -479,7 +520,6 @@ const QAForum = () => {
 
   return (
     <div className="space-y-6 animate-fade-in max-w-2xl mx-auto">
-      {/* IMAGE MODAL */}
       {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
 
       <div>
@@ -493,34 +533,53 @@ const QAForum = () => {
             placeholder="What's your question? (max 500 characters)" rows={3} maxLength={500}
             className="resize-none border-0 focus-visible:ring-0 px-0 text-base" />
 
-          {imagePreview && (
-            <div className="relative inline-block">
-              <img src={imagePreview} alt="preview" className="h-28 w-28 object-cover rounded-lg border" />
-              <button onClick={() => { setImageFile(null); setImagePreview(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
-                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center">
-                <X className="w-3 h-3" />
-              </button>
+          {imagePreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {imagePreviews.map((src, i) => (
+                <div key={i} className="relative inline-block">
+                  <img src={src} alt="preview" className="h-24 w-24 object-cover rounded-lg border" />
+                  <button
+                    onClick={() => removeImage(i)}
+                    className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 
           <div className="flex items-center justify-between border-t pt-3 flex-wrap gap-2">
             <div className="flex items-center gap-3">
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+              <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
                 onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  if (file.size > 5 * 1024 * 1024) { toast.error("Image too large (max 5MB)"); return; }
-                  setImageFile(file);
-                  setImagePreview(URL.createObjectURL(file));
+                  const files = Array.from(e.target.files ?? []);
+                  if (!files.length) return;
+                  const remaining = MAX_IMAGES - imageFiles.length;
+                  if (remaining <= 0) { toast.error(`Max ${MAX_IMAGES} images`); return; }
+                  const selected = files.slice(0, remaining);
+                  const oversized = selected.filter(f => f.size > 5 * 1024 * 1024);
+                  if (oversized.length) { toast.error("Each image must be under 5MB"); return; }
+                  setImageFiles(prev => [...prev, ...selected]);
+                  setImagePreviews(prev => [...prev, ...selected.map(f => URL.createObjectURL(f))]);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
                 }} />
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => fileInputRef.current?.click()} title="Add photo">
+              <Button
+                variant="ghost" size="icon" className="h-7 w-7"
+                onClick={() => fileInputRef.current?.click()}
+                title={`Add photos (max ${MAX_IMAGES})`}
+                disabled={imageFiles.length >= MAX_IMAGES}
+              >
                 <ImagePlus className="w-3.5 h-3.5 text-muted-foreground" />
               </Button>
+              {imageFiles.length > 0 && (
+                <span className="text-xs text-muted-foreground">{imageFiles.length}/{MAX_IMAGES}</span>
+              )}
               <Switch checked={anonymous} onCheckedChange={setAnonymous} id="anon" />
               <Label htmlFor="anon" className="text-xs text-muted-foreground cursor-pointer">Anonymous</Label>
               <span className="text-xs text-muted-foreground">{text.length}/500</span>
             </div>
-            <Button size="sm" onClick={handlePost} disabled={posting || (!text.trim() && !imageFile)}>
+            <Button size="sm" onClick={handlePost} disabled={posting || (!text.trim() && imageFiles.length === 0)}>
               <Send className="w-3 h-3 mr-1" />{posting ? "Posting…" : "Post"}
             </Button>
           </div>
@@ -535,6 +594,7 @@ const QAForum = () => {
         <div className="space-y-3">
           {items.map((t) => {
             const author = t.is_anonymous ? "Anonymous" : t.author_name ?? "Student";
+            const imgs = getImages(t);
             return (
               <Card key={t.id}
                 className="hover:shadow-md transition-shadow cursor-pointer hover:-translate-y-0.5 duration-200"
@@ -552,10 +612,8 @@ const QAForum = () => {
                         <span className="text-muted-foreground text-xs">· {formatDistanceToNow(new Date(t.created_at), { addSuffix: true })}</span>
                       </div>
                       <p className="text-sm text-foreground whitespace-pre-wrap break-words line-clamp-3">{t.body}</p>
-                      {t.image_url && (
-                        <img src={t.image_url} alt="question image"
-                          className="rounded-lg max-w-xs max-h-40 object-cover cursor-pointer hover:opacity-90"
-                          onClick={e => { e.stopPropagation(); setModalSrc(t.image_url!); }} /> // ← CHANGED
+                      {imgs.length > 0 && (
+                        <ImageGrid urls={imgs.slice(0, 3)} onOpen={(src) => { setModalSrc(src); }} />
                       )}
                       <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap"
                         onClick={e => e.stopPropagation()}>
