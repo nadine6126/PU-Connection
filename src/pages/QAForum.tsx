@@ -37,6 +37,37 @@ const translateText = async (text: string): Promise<string> => {
   return data.translated;
 };
 
+// ── IMAGE MODAL ──────────────────────────────────────────────────────────────
+const ImageModal = ({ src, onClose }: { src: string; onClose: () => void }) => {
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 text-white bg-black/50 rounded-full w-9 h-9 flex items-center justify-center hover:bg-black/70 transition-colors"
+        aria-label="Close"
+      >
+        <X className="w-5 h-5" />
+      </button>
+      <img
+        src={src}
+        alt="Full size"
+        className="max-w-[90vw] max-h-[90vh] object-contain rounded-xl shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      />
+    </div>
+  );
+};
+// ────────────────────────────────────────────────────────────────────────────
+
 const TranslateButton = ({ text }: { text: string }) => {
   const [translated, setTranslated] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -153,6 +184,7 @@ const AnswerItem = ({
 }) => {
   const [showReply, setShowReply] = useState(false);
   const [showReplies, setShowReplies] = useState(true);
+  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
   const author = answer.is_anonymous ? "Anonymous" : answer.author_name ?? "Student";
 
   const uploadImage = async (file: File, userId: string): Promise<string | null> => {
@@ -181,6 +213,9 @@ const AnswerItem = ({
 
   return (
     <div className={`${depth > 0 ? "ml-8 border-l-2 border-border pl-3" : ""}`}>
+      {/* IMAGE MODAL */}
+      {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
+
       <div className="flex gap-2 py-2">
         <Avatar className="w-7 h-7 shrink-0">
           {!answer.is_anonymous && answer.author_avatar && <AvatarImage src={answer.author_avatar} />}
@@ -196,14 +231,13 @@ const AnswerItem = ({
           {answer.image_url && (
             <img src={answer.image_url} alt="reply image"
               className="rounded-lg max-w-xs max-h-48 object-cover cursor-pointer hover:opacity-90 mt-1"
-              onClick={() => window.open(answer.image_url!, "_blank")} />
+              onClick={() => setModalSrc(answer.image_url!)} /> // ← CHANGED
           )}
           <div className="flex items-center gap-3 pt-0.5 flex-wrap">
             <button onClick={() => setShowReply(!showReply)}
               className="text-xs text-muted-foreground hover:text-primary transition-colors">
               Reply
             </button>
-            {/* FIX: Use answer.id and answer.user_id from the correct scope */}
             <ReportButton contentType="answer" contentId={answer.id} reportedUserId={answer.user_id} />
             {answer.replies && answer.replies.length > 0 && (
               <button onClick={() => setShowReplies(!showReplies)}
@@ -239,6 +273,7 @@ const QuestionThread = ({
 }) => {
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
 
   const loadAnswers = async () => {
     setLoading(true);
@@ -298,6 +333,9 @@ const QuestionThread = ({
 
   return (
     <div className="space-y-4">
+      {/* IMAGE MODAL */}
+      {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
+
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
         <ArrowLeft className="w-4 h-4" />Back to questions
       </button>
@@ -319,11 +357,10 @@ const QuestionThread = ({
               {question.image_url && (
                 <img src={question.image_url} alt="question image"
                   className="rounded-xl max-w-sm max-h-60 object-cover cursor-pointer hover:opacity-90 mt-1"
-                  onClick={() => window.open(question.image_url!, "_blank")} />
+                  onClick={() => setModalSrc(question.image_url!)} /> // ← CHANGED
               )}
               <div className="flex items-center gap-3 flex-wrap">
                 {question.body && <TranslateButton text={question.body} />}
-                {/* FIX: Report for the question itself, using question props */}
                 <ReportButton contentType="question" contentId={question.id} reportedUserId={question.user_id ?? ""} />
               </div>
             </div>
@@ -365,6 +402,7 @@ const QAForum = () => {
   const [selected, setSelected] = useState<Question | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [modalSrc, setModalSrc] = useState<string | null>(null); // ← ADDED
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
 
@@ -441,6 +479,9 @@ const QAForum = () => {
 
   return (
     <div className="space-y-6 animate-fade-in max-w-2xl mx-auto">
+      {/* IMAGE MODAL */}
+      {modalSrc && <ImageModal src={modalSrc} onClose={() => setModalSrc(null)} />}
+
       <div>
         <h1 className="text-2xl font-bold text-foreground">Q&A Forum</h1>
         <p className="text-muted-foreground text-sm">Ask anything — short and direct, like a tweet.</p>
@@ -513,15 +554,14 @@ const QAForum = () => {
                       <p className="text-sm text-foreground whitespace-pre-wrap break-words line-clamp-3">{t.body}</p>
                       {t.image_url && (
                         <img src={t.image_url} alt="question image"
-                          className="rounded-lg max-w-xs max-h-40 object-cover"
-                          onClick={e => { e.stopPropagation(); window.open(t.image_url!, "_blank"); }} />
+                          className="rounded-lg max-w-xs max-h-40 object-cover cursor-pointer hover:opacity-90"
+                          onClick={e => { e.stopPropagation(); setModalSrc(t.image_url!); }} /> // ← CHANGED
                       )}
                       <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap"
                         onClick={e => e.stopPropagation()}>
                         <span className="flex items-center gap-1">
                           <MessageSquare className="w-3 h-3" />{t.reply_count} {t.reply_count === 1 ? "reply" : "replies"}
                         </span>
-                        {/* FIX: Use t.id and t.user_id instead of answer.id / answer.user_id */}
                         <ReportButton contentType="question" contentId={t.id} reportedUserId={t.user_id ?? ""} />
                         <span className="text-primary text-xs">Click to view thread →</span>
                         {t.body && <TranslateButton text={t.body} />}

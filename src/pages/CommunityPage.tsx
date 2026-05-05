@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
-import { ReportButton } from "@/components/ReportButton";
+import { createPortal } from "react-dom";
 
 type Post = {
   id: string; user_id: string; body: string; category: string;
@@ -24,7 +24,6 @@ type Post = {
 const initials = (n: string) => n.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase();
 const PRESET_CATEGORIES = ["general", "tips", "networking", "announcement"];
 
-// Translate helper
 const translateText = async (text: string): Promise<string> => {
   const { data, error } = await supabase.functions.invoke("translate", {
     body: { text, targetLang: "English" },
@@ -33,7 +32,6 @@ const translateText = async (text: string): Promise<string> => {
   return data.translated;
 };
 
-// Translate button komponen
 const TranslateButton = ({ text }: { text: string }) => {
   const [translated, setTranslated] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,6 +77,7 @@ const CommunityPage = () => {
   const [posting, setPosting] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -140,8 +139,7 @@ const CommunityPage = () => {
     return data.publicUrl;
   };
 
-    const handlePost = async () => {
-    // Cek banned
+  const handlePost = async () => {
     const { data: profile } = await supabase.from("profiles")
       .select("is_banned").eq("user_id", user!.id).maybeSingle();
     if (profile?.is_banned) { toast.error("Your account has been banned."); return; }
@@ -268,9 +266,12 @@ const CommunityPage = () => {
                     {p.body && <p className="text-sm text-foreground whitespace-pre-wrap break-words">{p.body}</p>}
 
                     {p.image_url && (
-                      <img src={p.image_url} alt="post image"
+                      <img
+                        src={p.image_url}
+                        alt="post image"
                         className="rounded-xl max-w-full max-h-80 object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                        onClick={() => window.open(p.image_url!, "_blank")} />
+                        onClick={() => setPreviewImg(p.image_url!)}
+                      />
                     )}
 
                     <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
@@ -281,7 +282,6 @@ const CommunityPage = () => {
                         <span className={p.user_has_liked ? "text-red-500" : ""}>{p.upvotes_count}</span>
                       </button>
                       {p.body && <TranslateButton text={p.body} />}
-                      <ReportButton contentType="community_post" contentId={p.id} reportedUserId={p.user_id} />
                     </div>
                   </div>
                 </div>
@@ -289,6 +289,29 @@ const CommunityPage = () => {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* Image preview modal */}
+      {previewImg && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 p-4"
+          onClick={() => setPreviewImg(null)}
+        >
+          <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => setPreviewImg(null)}
+              className="absolute -top-10 right-0 text-white/80 hover:text-white flex items-center gap-1 text-sm"
+            >
+              <X className="w-5 h-5" /> Close
+            </button>
+            <img
+              src={previewImg}
+              alt="preview"
+              className="w-full max-h-[85vh] object-contain rounded-xl"
+            />
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
