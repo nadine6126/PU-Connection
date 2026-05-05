@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, MapPin, Users, ExternalLink, BookmarkPlus, BookmarkCheck, X, Clock, Plus } from "lucide-react";
+import { Calendar, MapPin, Users, ExternalLink, BookmarkPlus, BookmarkCheck, X, Clock } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useUserRole } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { createPortal } from "react-dom";
 
 type EventRow = {
   id: string; posted_by: string; title: string; description: string | null;
@@ -22,7 +22,6 @@ type EventRow = {
 
 const EventsPage = () => {
   const { user } = useAuth();
-  const { isAdmin } = useUserRole();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [tab, setTab] = useState("upcoming");
   const [selected, setSelected] = useState<EventRow | null>(null);
@@ -86,10 +85,9 @@ const EventsPage = () => {
       onClick={() => setSelected(ev)}
       className="hover:shadow-lg transition-all cursor-pointer hover:-translate-y-0.5 duration-200 overflow-hidden"
     >
-      {ev.cover_image_url && (
+      {ev.cover_image_url ? (
         <img src={ev.cover_image_url} alt={ev.title} className="w-full h-40 object-cover" />
-      )}
-      {!ev.cover_image_url && (
+      ) : (
         <div className="w-full h-40 bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
           <Calendar className="w-10 h-10 text-primary/40" />
         </div>
@@ -135,17 +133,9 @@ const EventsPage = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Events & Webinars</h1>
-          <p className="text-muted-foreground text-sm">Browse upcoming academic events and webinars.</p>
-        </div>
-        {isAdmin && (
-          <Button onClick={() => window.location.href = "/dashboard/admin"} size="sm">
-            <Plus className="w-4 h-4 mr-1" />
-            Manage Events
-          </Button>
-        )}
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Events & Webinars</h1>
+        <p className="text-muted-foreground text-sm">Browse upcoming academic events and webinars.</p>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -169,18 +159,15 @@ const EventsPage = () => {
         </TabsContent>
       </Tabs>
 
-      {/* Modal detail event */}
-      {selected && (
+      {selected && createPortal(
         <div
-          className="fixed inset-0 z-50 f
-          9lex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+          className="fixed inset-0 z-[9999] flex items-start justify-center pt-10 p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
           onClick={() => setSelected(null)}
         >
           <div
-            className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            className="bg-card rounded-2xl shadow-xl w-full max-w-2xl mx-4 mb-10"
             onClick={e => e.stopPropagation()}
           >
-            {/* Cover image */}
             {selected.cover_image_url ? (
               <img src={selected.cover_image_url} alt={selected.title} className="w-full h-52 object-cover rounded-t-2xl" />
             ) : (
@@ -188,9 +175,7 @@ const EventsPage = () => {
                 <Calendar className="w-16 h-16 text-primary/30" />
               </div>
             )}
-
             <div className="p-6 space-y-4">
-              {/* Header */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -203,8 +188,6 @@ const EventsPage = () => {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-
-              {/* Info */}
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Calendar className="w-4 h-4 shrink-0 text-primary" />
@@ -229,43 +212,26 @@ const EventsPage = () => {
                   </div>
                 )}
               </div>
-
-              {/* Description */}
               {selected.description && (
                 <div className="bg-secondary/50 rounded-xl p-4">
                   <p className="text-sm text-foreground whitespace-pre-wrap">{selected.description}</p>
                 </div>
               )}
-
-              {/* Interested count */}
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                 <Users className="w-4 h-4" />
                 <span>{selected.rsvp_count} people interested</span>
               </div>
-
-              {/* Action buttons */}
               <div className="flex gap-2 pt-2">
-                {/* Register via external link */}
                 {selected.external_register_url ? (
-                  <Button
-                    className="flex-1"
-                    onClick={() => window.open(selected.external_register_url!, "_blank")}
-                  >
-                    <ExternalLink className="w-4 h-4 mr-2" />
-                    Register Now
+                  <Button className="flex-1" onClick={() => window.open(selected.external_register_url!, "_blank")}>
+                    <ExternalLink className="w-4 h-4 mr-2" />Register Now
                   </Button>
                 ) : (
-                  <Button className="flex-1" disabled variant="outline">
-                    Registration link not available
-                  </Button>
+                  <Button className="flex-1" disabled variant="outline">Registration link not available</Button>
                 )}
-
-                {/* Save to calendar */}
                 <Button variant="outline" onClick={() => saveToCalendar(selected)} disabled={savingCal} title="Save to calendar">
                   <BookmarkPlus className="w-4 h-4" />
                 </Button>
-
-                {/* Interested toggle */}
                 <Button
                   variant={selected.user_interested ? "default" : "outline"}
                   onClick={(e) => toggleInterested(selected, e)}
@@ -276,7 +242,8 @@ const EventsPage = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
